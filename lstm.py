@@ -4,8 +4,9 @@ from torch.nn import functional as F
 import torch.nn.init as init
 
 # n_embed represents the internal state size
-n_embed = 128
-block_size = 8  # what is the maximum context length for predictions?
+n_embed = 64
+hidden_dim = 128
+block_size = 30  # what is the maximum context length for predictions?
 batch_size = 32  # how many independent sequences will we process in parallel?
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 token_size = 65
@@ -49,42 +50,36 @@ class RNN(nn.Module):
     def __init__(self, n_embed, vocab_size):
         super().__init__()
         self.embed = nn.Embedding(vocab_size, n_embed)  # Embedding layer
-        self.LSTM = nn.LSTM(n_embed, n_embed, batch_first=True)
-        self.linear = nn.Linear(n_embed, vocab_size)
+        self.LSTM = nn.LSTM(n_embed, hidden_dim, batch_first=True)
+        self.linear = nn.Linear(hidden_dim, vocab_size)
 
     def forward(self, x, h_prev=None):
         # After tokenization always need to embed
         x = self.embed(x)  # Convert token indices to embeddings
-        output, (h_n, c_n) = self.LSTM(x, h_prev)
-        y = self.linear(output)
-        return output, y, (h_n, c_n)
+        output, h = self.LSTM(x, h_prev)
+        output = self.linear(output)
+        return output, h
 
+    @torch.no_grad()
     def generate_text(self, seed, length=100, temperature=1.0):
         model.eval()  # Set the model to evaluation mode
         # IT wont' train the model anymore but you still need to do each step RNN
-        with torch.no_grad():  # No need to track gradients during generation
-            generated_text = seed
-
-            # we don't need the hidden and cell state since this is done running already
-            for _ in range(length):
-                print(_)
-                x = torch.tensor(encode(generated_text)).to(device).unsqueeze(
-                    0)
-                h = (torch.zeros(1, token_size, n_embed).to(
-                    device), torch.zeros(1, token_size, n_embed).to(
-                    device))
-                output, y, (h_n, c_n) = model(x, h)
-                # Apply temperature to logits and get probabilities
-                probs = F.softmax(y / temperature, dim=-1).squeeze()
-
-                # Sample the next character
-                next_token = torch.multinomial(probs, num_samples=1).item()
-                generated_text += itos[next_token]
-
-                # Use the predicted character as the next input
-                # x = torch.tensor([[next_token]]).to(device)
-
-            return generated_text
+        generated_text = seed
+        h = None
+        x = torch.tensor(encode(generated_text)).to(device).unsqueeze(
+            0)
+        # we don't need the hidden and cell state since this is done running already
+        for _ in range(length):
+            output, h = model(x, h)
+            probs = F.softmax(output[:, -1, :] / temperature, dim=-1).squeeze()
+            # Sample the next character
+            next_token = torch.multinomial(probs, num_samples=1).item()
+            generated_text += itos[next_token]
+            # Use the predicted character as the next input
+            x = torch.cat(
+                [x[:, 1:], torch.tensor([[next_token]])], dim=1)
+        model.train()
+        return generated_text
 
 
 model = RNN(n_embed=n_embed, vocab_size=token_size)
@@ -96,20 +91,15 @@ criterion = nn.CrossEntropyLoss()
 
 optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 eval_iters = 100
-n_iters = 500
+n_iters = 1000
 
 for i in range(n_iters):
     xb, yb = get_batch('train')
-    print(xb.shape)
-    h_prev = (torch.zeros(1, batch_size, n_embed).to(
-        device), torch.zeros(1, batch_size, n_embed).to(
-        device))  # Initial hidden state
-
     optimizer.zero_grad()
 
     # Forward pass
-    output, y, (h_n, c_n) = model(xb, h_prev)
-    loss = criterion(y.view(-1, vocab_size), yb.view(-1))
+    output, _ = model(xb)
+    loss = criterion(output.transpose(1, 2), yb)
 
     # Backward pass and optimization
     loss.backward()
