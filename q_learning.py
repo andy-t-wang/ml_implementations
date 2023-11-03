@@ -16,63 +16,70 @@ import random
 
 # Hyperparameters
 LR = 0.001
-GAMMA = 0.99 # discount factor on rewards so future rewards are worth less
-EPSILON_START = 1 # Randomness factor to encourage exploration
-EPSILON_END = 0.01 # final espsilon value we want this to be low at the end since we want to exploit
+GAMMA = 0.99  # discount factor on rewards so future rewards are worth less
+EPSILON_START = 1  # Randomness factor to encourage exploration
+# final espsilon value we want this to be low at the end since we want to exploit
+EPSILON_END = 0.01
 EPSILON_DECAY = 200
-MEMORY_SIZE= 10000
+MEMORY_SIZE = 10000
+
 
 class RL(nn.Module):
-  def __init__(self, input_dim, output_dim) -> None:
-    super(RL, self).__init__()
-    self.network = nn.Sequential(
-        nn.Linear(input_dim, 64),
-        nn.ReLU(),
-        nn.Linear(64, output_dim),
-    )
-  def forward(self, x):
-    return self.network(x)
+    def __init__(self, input_dim, output_dim) -> None:
+        super(RL, self).__init__()
+        self.network = nn.Sequential(
+            nn.Linear(input_dim, 64),
+            nn.ReLU(),
+            nn.Linear(64, output_dim),
+        )
+
+    def forward(self, x):
+        return self.network(x)
+
 
 def take_action(state, iters, network):
-  # sample against epsilon
-  choice = random.random()
-  probability = EPSILON_END + (EPSILON_START - EPSILON_END) * np.exp(-1. * iters / EPSILON_DECAY)
-  if choice > probability:
-    # Pass in state get action Exploit
-    # Pick the max argument index then convert to a float 
-    action = network(state).argmax().item()
-  else:
-    # Pick a random action from the action_space
-    action = env.action_space.sample()
-  return action
+    # sample against epsilon
+    choice = random.random()
+    probability = EPSILON_END + \
+        (EPSILON_START - EPSILON_END) * np.exp(-1. * iters / EPSILON_DECAY)
+    if choice > probability:
+        # Pass in state get action Exploit
+        # Pick the max argument index then convert to a float
+        action = network(state).argmax().item()
+    else:
+        # Pick a random action from the action_space
+        action = env.action_space.sample()
+    return action
+
 
 def train(network, memory, optimizer):
-  if len(memory) < 32:
-    return
-  # Unpack the memory
-  sample = random.sample(memory, min(len(memory), 32))
-  state, action, reward, next_state = zip(*sample)
-  state = torch.stack(state)
-  action = torch.stack(action)
-  reward = torch.stack(reward)
-  next_state = torch.stack(next_state)
-  # print(state.shape, action.shape, reward.shape, next_state.shape)
-  # Get the current q value based on the action taken
-  # print(action)
-  current_q = network(state).gather(1, action.long())
-  # print(current_q.shape)
-  # Get the max q value for the next state
-  with torch.no_grad():
-    max_next_q = network(next_state).max(1)[0].unsqueeze(1)
-    # print(max_next_q.shape)
-    # Get the expected q value
-    expected_q = (reward + GAMMA * max_next_q)
-  # Calculate the loss
-  loss = criterion(current_q, expected_q)
-  
-  optimizer.zero_grad()
-  loss.backward()
-  optimizer.step()
+    if len(memory) < 32:
+        return
+    # Unpack the memory
+    sample = random.sample(memory, min(len(memory), 32))
+    state, action, reward, next_state = zip(*sample)
+    state = torch.stack(state)
+    action = torch.stack(action)
+    reward = torch.stack(reward)
+    next_state = torch.stack(next_state)
+    # print(state.shape, action.shape, reward.shape, next_state.shape)
+    # Get the current q value based on the action taken
+    # print(action)
+    current_q = network(state).gather(1, action.unsqueeze(1).long())
+    print(current_q.shape)
+    # Get the max q value for the next state
+    with torch.no_grad():
+        max_next_q = network(next_state).max(1)[0]
+        print('R', max_next_q.shape, reward.shape)
+        # Get the expected q value
+        expected_q = (reward + GAMMA * max_next_q)
+    # Calculate the loss
+    loss = criterion(current_q, expected_q.unsqueeze(1))
+
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+
 
 env = gym.make("CartPole-v1")
 n_states = env.observation_space.shape[0]
@@ -84,33 +91,34 @@ criterion = nn.MSELoss()
 state = torch.tensor(env.reset()[0], dtype=torch.float32)
 action = take_action(state, 0, model)
 avg_loss = 0
-# Now loop 
+# Now loop
 num_episodes = 500
 memory = []
 for episode in range(num_episodes):
-  state = torch.tensor(env.reset()[0], dtype=torch.float32)
-  steps_done = 0
-  total_reward = 0
-  for t in range(200):
-    action = take_action(state, steps_done, model)
-    observation, reward, terminated, truncated, info = env.step(action)
-    next_state = torch.tensor(observation, dtype=torch.float32)
-    if terminated:
-      reward = -2
-    memory.append((state, torch.tensor([action], dtype=torch.float32), torch.tensor([reward], dtype=torch.float32), next_state))
+    state = torch.tensor(env.reset()[0], dtype=torch.float32)
+    steps_done = 0
+    total_reward = 0
+    for t in range(200):
+        action = take_action(state, steps_done, model)
+        observation, reward, terminated, truncated, info = env.step(action)
+        next_state = torch.tensor(observation, dtype=torch.float32)
+        if terminated:
+            reward = -20
+        memory.append((state, torch.tensor(action, dtype=torch.float32), torch.tensor(
+            reward, dtype=torch.float32), next_state))
 
-    if len(memory) > MEMORY_SIZE:
-      memory.pop(0)
+        if len(memory) > MEMORY_SIZE:
+            memory.pop(0)
 
-    state = next_state
-    total_reward += reward
-    steps_done += 1
+        state = next_state
+        total_reward += reward
+        steps_done += 1
 
-    # If over reset
-    if terminated or truncated:
-      break
-  train(model, memory, optimizer)
-  avg_loss += total_reward
-  print(f"Episode {episode + 1}, Total Reward: {total_reward}, Total Avg: {avg_loss / (episode + 1)}")
+        # If over reset
+        if terminated or truncated:
+            break
+    train(model, memory, optimizer)
+    avg_loss += total_reward
+    print(
+        f"Episode {episode + 1}, Total Reward: {total_reward}, Total Avg: {avg_loss / (episode + 1)}")
 env.close()
-
