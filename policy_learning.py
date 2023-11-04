@@ -79,8 +79,9 @@ for episode in range(1000):
                 action)  # [n]
             next_state = torch.tensor(
                 observation, dtype=torch.float32)  # [n,8]
-            if done:
-                reward -= 10
+
+            if reward > 100:
+                print("reward ", reward)
             trajectory.append((torch.tensor(action, dtype=torch.int64), torch.tensor(
                 reward, dtype=torch.float32), state))
             state = next_state
